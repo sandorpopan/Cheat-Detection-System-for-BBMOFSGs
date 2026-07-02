@@ -1,0 +1,4 @@
+pynput>=1.7.6
+pycryptodome>=3.19.0
+ipfshttpclient>=0.8.0a2
+web3>=6.0.0
