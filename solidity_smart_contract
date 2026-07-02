@@ -1,15 +1,4 @@
-None selected 
 
-Skip to content
-Using Gmail with screen readers
-
-1 of 30
-(no subject)
-Inbox
-
-Cristian Popan <cristian.popan@gmail.com>
-11:17 (7 minutes ago)
-to me
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
@@ -161,5 +150,4 @@ contract CheatVerification {
     }
 }
 
-Sent from my iPhone
-Displaying cheat_rules.py.
+
