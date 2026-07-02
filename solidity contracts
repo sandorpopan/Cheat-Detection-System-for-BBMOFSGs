@@ -1,1 +1,165 @@
+None selected 
 
+Skip to content
+Using Gmail with screen readers
+
+1 of 30
+(no subject)
+Inbox
+
+Cristian Popan <cristian.popan@gmail.com>
+11:17 (7 minutes ago)
+to me
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+/// @title CheatVerification
+/// @notice Receives flagged cheat reports from the off-chain Python
+///         detection pipeline, lets PoS validators verify them, and
+///         bans the offending wallet if the report is confirmed.
+///
+/// Design notes:
+/// - Raw gameplay logs live on IPFS (see ipfs/ipfs_client.py), NOT on
+///   chain, to avoid blockchain congestion. Only the IPFS CID plus the
+///   full structured violation data needed for verification is stored
+///   here.
+/// - Validators stake collateral (handled by the parent PoS chain /
+///   validator registry - out of scope for this contract) and are
+///   incentivised to verify reports honestly.
+/// - A report only results in a ban once it crosses the configured
+///   validator approval threshold, to avoid a single malicious or
+///   mistaken validator banning a legit player.
+contract CheatVerification {
+    enum ReportStatus { Pending, Confirmed, Rejected }
+
+    struct Violation {
+        string rule;               // e.g. "accuracy_aimbot"
+        uint256 observedValueE6;   // observed value scaled by 1e6 (Solidity has no floats)
+        uint256 thresholdE6;       // threshold scaled by 1e6
+        string severity;           // "low" | "medium" | "high"
+    }
+
+    struct CheatReport {
+        address playerWallet;
+        bytes32 sessionId;
+        string ipfsCid;            // pointer to the encrypted raw logs on IPFS
+        Violation[] violations;
+        uint256 severityScore;
+        uint256 timestamp;
+        ReportStatus status;
+        uint256 approvals;
+        uint256 rejections;
+    }
+
+    address public owner;
+    uint256 public requiredApprovals = 3;
+
+    mapping(bytes32 => CheatReport) private reports;       // reportId => report
+    mapping(bytes32 => mapping(address => bool)) public hasVoted; // reportId => validator => voted
+    mapping(address => bool) public validators;
+    mapping(address => bool) public bannedWallets;
+
+    event ReportSubmitted(bytes32 indexed reportId, address indexed playerWallet, string ipfsCid, uint256 severityScore);
+    event ReportVoted(bytes32 indexed reportId, address indexed validator, bool approve);
+    event WalletBanned(address indexed playerWallet, bytes32 indexed reportId);
+    event ReportRejected(bytes32 indexed reportId);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    modifier onlyValidator() {
+        require(validators[msg.sender], "not a validator");
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function addValidator(address validator) external onlyOwner {
+        validators[validator] = true;
+    }
+
+    function removeValidator(address validator) external onlyOwner {
+        validators[validator] = false;
+    }
+
+    function setRequiredApprovals(uint256 count) external onlyOwner {
+        requiredApprovals = count;
+    }
+
+    /// @notice Called by the off-chain detection pipeline once
+    ///         cheat_rules.py flags a session. Submits the full
+    ///         violation data + IPFS pointer for validator review.
+    function submitReport(
+        address playerWallet,
+        bytes32 sessionId,
+        string calldata ipfsCid,
+        Violation[] calldata violations,
+        uint256 severityScore
+    ) external returns (bytes32 reportId) {
+        require(!bannedWallets[playerWallet], "wallet already banned");
+
+        reportId = keccak256(abi.encodePacked(playerWallet, sessionId, block.timestamp));
+
+        CheatReport storage r = reports[reportId];
+        r.playerWallet = playerWallet;
+        r.sessionId = sessionId;
+        r.ipfsCid = ipfsCid;
+        r.severityScore = severityScore;
+        r.timestamp = block.timestamp;
+        r.status = ReportStatus.Pending;
+
+        for (uint256 i = 0; i < violations.length; i++) {
+            r.violations.push(violations[i]);
+        }
+
+        emit ReportSubmitted(reportId, playerWallet, ipfsCid, severityScore);
+    }
+
+    /// @notice Validators independently fetch the logs from IPFS,
+    ///         re-run/verify the cheat check, and vote.
+    function voteOnReport(bytes32 reportId, bool approve) external onlyValidator {
+        CheatReport storage r = reports[reportId];
+        require(r.timestamp != 0, "report does not exist");
+        require(r.status == ReportStatus.Pending, "report already finalized");
+        require(!hasVoted[reportId][msg.sender], "already voted");
+
+        hasVoted[reportId][msg.sender] = true;
+
+        if (approve) {
+            r.approvals += 1;
+        } else {
+            r.rejections += 1;
+        }
+
+        emit ReportVoted(reportId, msg.sender, approve);
+
+        if (r.approvals >= requiredApprovals) {
+            r.status = ReportStatus.Confirmed;
+            bannedWallets[r.playerWallet] = true;
+            emit WalletBanned(r.playerWallet, reportId);
+        } else if (r.rejections >= requiredApprovals) {
+            r.status = ReportStatus.Rejected;
+            emit ReportRejected(reportId);
+        }
+    }
+
+    function isBanned(address wallet) external view returns (bool) {
+        return bannedWallets[wallet];
+    }
+
+    function getReportStatus(bytes32 reportId) external view returns (ReportStatus) {
+        return reports[reportId].status;
+    }
+
+    function getViolationCount(bytes32 reportId) external view returns (uint256) {
+        return reports[reportId].violations.length;
+    }
+}
+
+Sent from my iPhone
+Displaying cheat_rules.py.
